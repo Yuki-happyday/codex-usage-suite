@@ -1,0 +1,14 @@
+# 界面绘制（自绘菜单、图标位图）
+Pillow>=10.0
+
+# CDP 客户端：向 ChatGPT/Codex 桌面版注入「本轮消耗」标签
+websocket-client>=1.6.0
+
+# Windows Toast 通知（winrt 拆包发布，这几个是实际被 import 的）
+winrt-runtime>=2.0.0
+winrt-Windows.UI.Notifications>=2.0.0
+winrt-Windows.Data.Xml.Dom>=2.0.0
+winrt-Windows.Foundation>=2.0.0
+winrt-Windows.Foundation.Collections>=2.0.0
+
+# 说明：托盘与悬浮窗本身用 ctypes 调 Win32，不需要 pywin32 / pystray / PyQt

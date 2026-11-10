@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+
+# 运行期生成的个人数据，不要入库
+state.json
+state.json.bak-*
+watch.log
+crash.log
+err.log
+demo.log
+*.lock
+
+# 桌面实拍截图：背景里可能带用户文档内容，不入库（含根目录与 docs/screenshots）
+shot-*.png
+
+# 本地快捷方式（含本机绝对路径）
+*.lnk
+
+# 上传 GitHub 前的备份（内含清理前的含用户名版本）
+backup/
+
+# 编辑器 / 系统杂物
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
