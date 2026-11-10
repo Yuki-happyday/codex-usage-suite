@@ -92,6 +92,8 @@ pip install -r requirements.txt
 
 > 如果 ChatGPT 已经在跑但没开调试端口，脚本会先问你要不要关掉重开——输入框里没发送的内容会丢，所以给了确认框。
 
+「自动接管任务栏启动」默认关闭。需要这个功能时，可以在托盘或悬浮窗的右键菜单里主动开启。开启后，监听程序可能自动重启 ChatGPT。
+
 ### 3.5 开机自启
 
 `Win + R` → 输入 `shell:startup` → 把 `启动 Codex 用量提示.vbs` 的**快捷方式**丢进去。
@@ -122,10 +124,10 @@ codex-usage-suite/
 
 ## 5. 工作原理
 
-1. **监听日志**：只读 `~/.codex/sessions/**/rollout-*.jsonl`，增量读（`state.json` 记每个文件读到的字节偏移），找 `event_msg` 里的 `token_count` 事件
+1. **监听日志**：只读 `~/.codex/sessions/**/rollout-*.jsonl`，增量读取完整行（`state.json` 记每个文件读到的字节偏移），找 `event_msg` 里的 `token_count` 事件。首次启动跳过已有日志的历史整行，运行中发现的新日志从头读取
 2. **解析额度**：`rate_limits.primary`（300 分钟 = 5 小时窗口）、`rate_limits.secondary`（10080 分钟 = 每周）、`credits` 余额，字段为 `used_percent` + 重置时间
-3. **累计本轮**：`task_started` 清零，`token_count` 累加 input/output/cached/reasoning，`task_complete` 时结算 → 弹通知 + 更新悬浮窗 + 推 CDP 标签
-4. **过期保护**：重置点已过期的日志不参与计算，避免显示成「旧窗口形状」的错误百分比
+3. **累计本轮**：按会话日志分别累计。`task_started` 清零，`token_count` 累加 input/output/cached/reasoning，`task_complete` 时结算 → 弹通知 + 更新悬浮窗 + 推 CDP 标签
+4. **过期保护**：额度窗口已过重置点或缺少有效的重置时间时，悬浮窗和托盘明细显示「待刷新」，托盘图标显示 `--`。有新快照时恢复显示剩余百分比
 5. **状态持久化**：`state.json` 只存偏移量、外观偏好、窗口位置，不含任何对话内容
 
 ---

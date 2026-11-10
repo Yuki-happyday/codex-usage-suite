@@ -190,7 +190,7 @@ def ago_text(ts):
 
 
 def windows_snapshot(state):
-    """返回 [(label, remain, used, reset_text, key), ...]"""
+    """统一界面和通知的额度快照。重置时间未知或已过时，剩余额度待刷新。"""
     rl = state.get('rate_limits') or {}
     out = []
     for key in ('primary', 'secondary'):
@@ -198,14 +198,17 @@ def windows_snapshot(state):
         if not isinstance(w, dict) or w.get('used_percent') is None:
             continue
         used = float(w['used_percent'])
-        stale = window_expired(w.get('resets_at'))
+        reset_ts = w.get('resets_at')
+        reset = fmt_reset(reset_ts)
+        stale = not reset or window_expired(reset_ts)
         out.append({
             'key': key,
             'label': window_label(w.get('window_minutes')),
-            'used': 0.0 if stale else used,
-            'remain': 100.0 if stale else max(0.0, 100.0 - used),
-            'reset': '' if stale else fmt_reset(w.get('resets_at')),
-            'reset_ts': w.get('resets_at'),
+            'window_minutes': w.get('window_minutes'),
+            'used': None if stale else used,
+            'remain': None if stale else max(0.0, 100.0 - used),
+            'reset': '' if stale else reset,
+            'reset_ts': reset_ts,
             'stale': stale,
         })
     return out
@@ -332,6 +335,20 @@ def scan_files():
     return out
 
 
+def initial_log_offset(path):
+    """已有日志跳过历史整行，末尾尚未写完的记录留给监听循环。"""
+    with open(path, 'rb') as fh:
+        end = fh.seek(0, os.SEEK_END)
+        while end:
+            start = max(0, end - 8192)
+            fh.seek(start)
+            last_newline = fh.read(end - start).rfind(b'\n')
+            if last_newline >= 0:
+                return start + last_newline + 1
+            end = start
+    return 0
+
+
 class Turn:
     def __init__(self):
         self.reset()
@@ -435,6 +452,11 @@ def build_notification(turn, state):
     delta_cells, remain_cells = [], []
     for w in wins:
         short = NOTIFY_LABEL.get(w['label'], w['label'])
+        if w['stale']:
+            delta_cells.append(f'{short}（—）')
+            remain_cells.append(f'{short}（待刷新）')
+            prev.pop(w['key'], None)
+            continue
         used = w['used']
         delta = None
         if w['key'] in prev and prev[w['key']] is not None:
@@ -830,9 +852,8 @@ def takeover_loop(state):
 
 
 def takeover_enabled(state):
-    """takeover 缺省或存成 null 时都视为开启（旧 state.json 里可能是 null）"""
-    v = state.get('takeover')
-    return True if v is None else bool(v)
+    """仅在用户通过菜单显式开启后接管。"""
+    return state.get('takeover') is True
 
 
 def _toggle_takeover(state):
@@ -855,7 +876,8 @@ def rebuild_cdp_line(state):
     cells = []
     for w in wins:
         short = NOTIFY_LABEL.get(w['label'], w['label'])
-        cells.append(f'{short}（0%）')
+        delta = '—' if w['stale'] else '0%'
+        cells.append(f'{short}（{delta}）')
     state['cdp_line'] = '本轮 · ' + ' · '.join(cells)
     save_state(state)
     log('cdp_line rebuilt: ' + state['cdp_line'])
@@ -907,7 +929,7 @@ def is_stale(state):
 def tray_text(state):
     """图标只放一个数字（剩余最少的那个窗口），副标在 16px 下看不清，已去掉"""
     wins = windows_snapshot(state)
-    if not wins:
+    if not wins or any(w['stale'] for w in wins):
         return '--', (100, 116, 139), None
     main = min(wins, key=lambda w: w['remain'])
     color = (148, 163, 184) if is_stale(state) else color_for(main['remain'])
@@ -920,10 +942,10 @@ def tooltip(state):
         return 'Codex 用量：等待数据（下一轮对话后刷新）'
     parts = []
     for w in wins:
-        s = f'{w["label"]}剩{w["remain"]:.0f}%'
-        if w['reset']:
-            s += f'（{w["reset"]}重置）'
-        parts.append(s)
+        if w['stale']:
+            parts.append(f'{w["label"]}待刷新')
+        else:
+            parts.append(f'{w["label"]}剩{w["remain"]:.0f}%（{w["reset"]}重置）')
     tip = 'Codex · ' + ' · '.join(parts)
     if is_stale(state):
         ts = state.get('limits_ts')
@@ -987,34 +1009,21 @@ def is_dark_mode(state=None):
 
 
 def float_payload(state):
-    """悬浮窗要的数据：5h 重置钟点、week 重置日期、两个窗口的剩余百分比
-
-    左节以前放的是倒计时（还剩 3:27），右节放的是重置日期，两格都是"时间"
-    却不是一个意思，很容易把左边也当成重置时间而算错窗口。现在统一成
-    「重置时间」：左节同一天显示 19:30，跨零点显示 明01:30。
-    """
-    rl = state.get('rate_limits') or {}
+    """悬浮窗的重置时间、剩余百分比和待刷新提示。"""
     p = {'reset5': '--:--', 'date': '--/--', 'p1': None, 'p2': None}
-    for key in ('primary', 'secondary'):
-        w = rl.get(key)
-        if not isinstance(w, dict) or w.get('used_percent') is None:
-            continue
-        mins = w.get('window_minutes') or 0
-        ts = w.get('resets_at')
-        stale = window_expired(ts)
-        # 窗口已过期 = 重新计时了，剩余按 100% 算，顶部回到 --
-        remain = 100.0 if stale else max(0.0, 100.0 - float(w['used_percent']))
+    for w in windows_snapshot(state):
+        mins = w['window_minutes']
+        ts = w['reset_ts']
         if mins and mins <= 360:
-            p['p1'] = remain
-            p['reset5'] = '--:--' if stale else fmt_reset_short(ts)
+            p['p1'] = w['remain']
+            p['reset5'] = '待刷新' if w['stale'] else fmt_reset_short(ts)
         else:
-            p['p2'] = remain
-            if not stale:
-                try:
-                    dt = datetime.fromtimestamp(float(ts))
-                    p['date'] = f'{dt.month}/{dt.day}'      # 11/9，不补零
-                except Exception:
-                    pass
+            p['p2'] = w['remain']
+            if w['stale']:
+                p['date'] = '待刷新'
+            else:
+                dt = datetime.fromtimestamp(float(ts))
+                p['date'] = f'{dt.month}/{dt.day}'
     return p
 
 
@@ -1064,17 +1073,14 @@ def run_ui(state):
         if not wins:
             items.append(('等待数据 · 下一轮对话后刷新', False, None))
         for w in wins:
+            if w['stale']:
+                items.append((f'{w["label"]}：待刷新', False, None))
+                continue
             parts = [f'{w["label"]}：剩 {w["remain"]:.0f}%']
-            if w.get('stale'):
-                # 窗口已重置：旧百分比作废，不再报"还剩不到 1 分钟"这种鬼话
-                parts.append('已重置')
-            else:
-                # 倒计时从卡片挪到这儿：卡片顶部统一显示重置时间，不再放"还剩多久"
-                left = fmt_left(w.get('reset_ts'))
-                if left:
-                    parts.append(f'还剩 {left}')
-                if w['reset']:
-                    parts.append(f'{w["reset"]} 重置')
+            left = fmt_left(w['reset_ts'])
+            if left:
+                parts.append(f'还剩 {left}')
+            parts.append(f'{w["reset"]} 重置')
             items.append(('  '.join(parts), False, None))
         c = credits_text(st)
         if c:
@@ -1412,12 +1418,15 @@ def main():
     seed_from_logs(state)
     rebuild_cdp_line(state)
     offsets = state.setdefault('offsets', {})
-    turn = Turn()
+    turns = {}
 
     files = scan_files()
     for f in files:
         if f not in offsets:
-            offsets[f] = os.path.getsize(f)
+            try:
+                offsets[f] = initial_log_offset(f)
+            except OSError:
+                continue
     save_state(state)
     log(f'watcher started, tracking {len(files)} files')
 
@@ -1430,44 +1439,53 @@ def main():
     while True:
         try:
             for f in scan_files():
+                saved_offset = offsets.get(f, 0)
                 try:
                     size = os.path.getsize(f)
+                    if size == saved_offset:
+                        continue
+                    off = saved_offset
+                    if size < off:
+                        turns.pop(f, None)
+                        off = 0
+                    with open(f, 'rb') as fh:
+                        fh.seek(off)
+                        chunk = fh.read()
                 except OSError:
                     continue
-                off = offsets.get(f)
-                if off is None:
-                    offsets[f] = size
+                # JSONL 写入可能跨越两次轮询。偏移只提交到最后一个换行。
+                complete = chunk.rfind(b'\n') + 1
+                next_offset = off + complete
+                if not complete and next_offset == saved_offset:
                     continue
-                if size < off:
-                    off = 0
-                if size == off:
-                    continue
-                with open(f, 'r', encoding='utf-8', errors='replace') as fh:
-                    fh.seek(off)
-                    chunk = fh.read()
-                    offsets[f] = fh.tell()
-                for line in chunk.splitlines():
+                turn = turns.setdefault(f, Turn())
+                for line in chunk[:complete].split(b'\n'):
                     if not line.strip():
                         continue
                     try:
-                        obj = json.loads(line)
-                    except Exception:
+                        obj = json.loads(line.decode('utf-8', errors='replace'))
+                    except ValueError:
                         continue
                     try:
-                        if handle_line(obj, state, turn):
-                            with LOCK:
-                                state['last_turn'] = turn.total
-                                title, lines, app_line = build_notification(turn, state)
-                                if app_line:
-                                    state['cdp_line'] = app_line
-                            ok = notify(title, lines)
+                        with LOCK:
+                            if not handle_line(obj, state, turn):
+                                continue
+                            state['last_turn'] = turn.total
+                            title, lines, app_line = build_notification(turn, state)
                             if app_line:
-                                cdp_push(app_line)
-                            log(('notified' if ok else 'notify-failed') + ' | ' + ' / '.join(lines))
+                                state['cdp_line'] = app_line
                             turn.reset()
+                        ok = notify(title, lines)
+                        if app_line:
+                            cdp_push(app_line)
+                        log(('notified' if ok else 'notify-failed') + ' | ' + ' / '.join(lines))
                     except Exception as e:
                         log(f'handle error: {e}')
-                save_state(state)
+                if not turn.active:
+                    turns.pop(f, None)
+                with LOCK:
+                    offsets[f] = next_offset
+                    save_state(state)
             time.sleep(POLL)
         except KeyboardInterrupt:
             break
