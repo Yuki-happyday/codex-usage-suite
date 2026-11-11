@@ -27,7 +27,7 @@ def level1():
                               ('大', True, None)]),
         ]),
         ('-', False, None),
-        ('贴到最近的屏幕边缘', True, None),
+        # 未贴边时不出现「取消贴边」；贴边是拖到边缘自动发生的，不单列一行
         ('固定在任务栏', True, None),
         ('-', False, None),
         ('Codex 用量', False, None, M.MENU_SECTION),

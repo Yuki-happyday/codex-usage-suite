@@ -5,7 +5,7 @@
 一套代码，两条输出线，共用一个只读日志的用量解析内核。**不联网、不读凭证、不上传任何数据。**
 
 <p align="center">
-  <img src="docs/screenshots/card-3sizes.png" width="760" alt="悬浮窗三种尺寸">
+  <img src="docs/screenshots/card-3sizes.png" width="820" alt="悬浮窗三档尺寸，浅色与深色各一行">
 </p>
 
 ---
@@ -17,7 +17,7 @@ Codex 的额度消耗很快，但剩余量只有点开侧栏才看得到。这�
 | 痛点 | 对应产品线 |
 | --- | --- |
 | 写着代码突然被限流，才知道 5 小时窗口用完了 | 桌面悬浮窗：常驻显示剩余百分比，胶囊形态几乎不占地方 |
-| 不知道某一次长回答到底吃掉多少额度 | 对话页标签：每轮回答的操作行后面直接标 `本轮 · 12.3k tokens · 5h -4%` |
+| 不知道某一次长回答到底吃掉多少额度 | 对话页标签：每轮回答的操作行后面直接标 `本轮 · 5h（-4%） · week（-1%）` |
 | 想回溯「今天什么时候用超的」 | 托盘悬停显示重置时间、余额、上次使用时间 |
 
 ---
@@ -114,9 +114,11 @@ codex-usage-suite/
 ├── 启动 ChatGPT（带用量标签）.vbs   # 确保调试端口 + 启悬浮窗
 ├── make_lnk.vbs              # 生成带调试端口的快捷方式
 ├── requirements.txt
-├── tools/                    # 开发期验证脚本（预览出图、真机校验、光标探测）
+├── tools/                    # 开发脚本：样张生成（make_card_sizes / preview_menu_sub）、真机校验、光标探测
 └── docs/screenshots/         # 组件样张与真实截图
 ```
+
+> 两张样张都由代码直接渲染，改完界面记得重跑 `python tools/make_card_sizes.py` 与 `python tools/preview_menu_sub.py`，别让图跟实现脱节。
 
 > 核心 5 个模块必须与主程序同目录平铺——`pythonw` 直接以脚本方式启动，`import float_win32` 这类同目录导入不能挪进包。
 
